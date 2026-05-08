@@ -1,7 +1,4 @@
-name: Build APK       - name: Build APK
-        run: |
-          flet build apk --project "SINDBAD_PRO" --org "com.sindbad.app" --include-packages flet,obd,pyserial
-
+name: Build APK
 on: [push]
 
 jobs:
@@ -27,17 +24,16 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      - name: Install Libraries
+      - name: Install dependencies
         run: |
-          pip install flet==0.21.2
-          pip install obd
+          pip install flet==0.21.2 obd pyserial
 
       - name: Build APK
         run: |
-          flet build apk --project "SINDBAD_PRO" --org "com.sindbad.app"
+          flet build apk --project "SINDBAD_PRO" --org "com.sindbad.app" --include-packages flet,obd,pyserial
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SINDBAD-OBD-FINAL
+          name: SINDBAD-FINAL-OBD
           path: build/apk/*.apk
