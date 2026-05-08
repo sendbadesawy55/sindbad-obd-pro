@@ -1,0 +1,1168 @@
+"""
+سندباد أو بي دي برو – ظ„ظˆطط© طھط´ط®ظٹطμ ط³ظٹط§ط±ط© ط§ططھط±ط§ظپظٹط©
+تطبيق Flet جاهز للإنتاج لنظام Android APK.
+
+دليل التوصيل لكل نوع من أنواع المحولات:
+  بلوتوث ELM327 ← الاقتران في إعدادات أندرويد ← المنفذ = /dev/rfcomm0
+  واي فاي ELM327 ← قم بتوصيل الهاتف بنقطة اتصال المحول ← المضيف = 192.168.0.10، المنفذ = 35000
+  USB ELM327 ← يتطلب جهاز أندرويد أو كمبيوتر مكتبي مُجذّر ← المنفذ = /dev/ttyUSB0 أو COM3
+  المحاكاة ← لا حاجة إلى أجهزة إضافية — مثالية للعروض التوضيحية واختبار واجهة المستخدم
+
+أوامر البناء:
+  تشغيل الأسطول main.py (مطوّر سطح المكتب)
+  flet build apk --product "SINDBAD OBD PRO" --org "com.sindbad.obdpro"
+"""
+
+from __future__ import annotations
+
+استيراد json
+استيراد الرياضيات
+استيراد نظام التشغيل
+استيراد عشوائي
+استيراد الخيوط
+وقت الاستيراد
+من datetime استورد datetime
+من typing استورد Optional
+
+استورد flet باسم ft
+
+يحاول:
+    استيراد obd
+    OBD_AVAILABLE = صحيح
+باستثناء خطأ الاستيراد:
+    OBD_AVAILABLE = خطأ
+
+
+# ————— لوحة الألوان ---------------------------------------------------------------------------- ——————————————————————————————————————————————————————————————————————————————————————————-
+
+BG = "#0a0f1a"
+CARD_BG = "#111827"
+CARD_BORDER = "#1e2d45"
+PRIMARY = "#3b82f6"
+PRIMARY_DIM = "#1d4ed8"
+النص = "#f1f5f9"
+تم كتم الصوت = "#64748b"
+أحمر = "#ef4444"
+الأصفر = "#eab308"
+الأخضر = "#22c55e"
+
+
+# ———— الإعدادات الافتراضية ------------------------------------------------------------------------------------ ——————————————————————————————————————————————————————————————————————————————————————-
+
+الإعدادات الافتراضية: قاموس = {
+    "نوع_الاتصال": "محاكاة", # محاكاة | بلوتوث | واي فاي | يو إس بي
+    "bt_port": "", # /dev/rfcomm0, COM3 …
+    معدل نقل البيانات بالبت في الثانية: 38400، 9600 | 38400 | 115200
+    "wifi_host": "192.168.0.10",
+    "wifi_port": "35000",
+    "usb_port": ""، # /dev/ttyUSB0، COM3 ...
+    معدل نقل البيانات عبر منفذ USB: "38400"،
+    "auto_connect": خطأ،
+}
+
+STORAGE_KEY = "sindbad_obd_settings"
+
+
+def build_port_string(s: dict) -> str:
+    """حوّل قاموس الإعدادات إلى سلسلة المنفذ المتوقعة من python-obd."""
+    t = s.get("connection_type", "simulation")
+    إذا كانت قيمة t تساوي "بلوتوث":
+        return s.get("bt_port", "").strip()
+    إذا كانت قيمة t تساوي "wifi":
+        host = s.get("wifi_host", "192.168.0.10").strip()
+        port = s.get("wifi_port", "35000").strip()
+        return f"{host}:{port}"
+    إذا كان t == "usb":
+        return s.get("usb_port", "").strip()
+    يعود ""
+
+
+دالة get_baud(s: dict) -> int:
+    t = s.get("connection_type", "simulation")
+    key = "bt_baud" if t == "bluetooth" else "usb_baud"
+    يحاول:
+        return int(s.get(key, 38400))
+    باستثناء خطأ القيمة:
+        إرجاع 38400
+
+
+# قواعد DTC
+
+فئة DtcRule:
+    def __init__(self, code: str, name_ar: str, desc_ar: str, severity: str):
+        self.code = code
+        self.name_ar = name_ar
+        self.desc_ar = desc_ar
+        شدة الحالة الذاتية = الشدة
+
+    def triggered(self, rpm, temp, throttle, speed, battery) -> bool:
+        إرجاع خطأ
+
+
+class _RpmHigh(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): return rpm > 6500
+
+class _TempHigh(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): return temp > 100
+
+class _BattLow(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): تُرجع 0 < battery < 12
+
+class _BattHigh(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): return battery > 14.8
+
+class _ThrottleHigh(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): return throttle > 85
+
+class _TempLow(DtcRule):
+    دالة triggered(self, rpm, temp, throttle, speed, battery): تُرجع temp < 70 و rpm > 1000
+
+
+DTC_RULES: list[DtcRule] = [
+    _TempHigh ("P0217"، "ط§ط±طھظپط§ط¹ طط±ط§ط±ط© ط§ظ„ظ…طط±ظƒ"، "طط±ط§ط±ط© ط³ط§ط¦ظ" ط§ظ"طھط¨ط±ظٹط¯ طھط¬ط§ظˆط²طھ 100A°C"، "حرج"),
+    _RpmHigh ("P0300"، "ط§ط´طھط¹ط§ظ" ط¹ط´ظˆط§ط¦ظٹ ظپظٹ ط§ظط £ط³ط·ظˆط§ظ†ط§طھ"، "RPM طھط¬ط§ظˆط² 6500 â€" ط§ط´طھط¹ط§ظ„ط؛ظٹط± ظ…ظ†طھط¸ظ…”، “حرجة”)،
+    _BattLow ("P0562"، "ط¬ظ‡ط¯ ط§ظ"ط¨ط·ط§ط±ظٹط© ظ…ظ†ط®ظپط¶"، "ط§ظ„ط¬ظ‡ط¯ ط £ظ‚ظ„ ظ…ظ† 12V —” طھطظ‚ظ‚ ظ…ظ† ط§ظ‹ظ…ظˆظ‹ط¯”، “تحذير”)،
+    _BattHigh ("P0563"، "ط¬ظ‡ط¯ ط§ظ"ط¨ط·ط§ط±ظٹط© ظ…ط±طھظپط¹"، "ط§ظ„ط¬ظ‡ط¯ طھط¬ط§ظˆط² 14.8V —” ط§ظ„ظ…ظ†ط¸ظ… ظ‚ط¯ ظٹظƒظˆظ† ظ…ط¹ط·ظ‹ط§ظ‹”، “تحذير”)،
+    _ThrottleHigh("P0121"، "طط³ط§ط³ ط§ظ"ط«ط±ظˆطھظ„ ط®ط§ط±ط¬ ط§ظ„ظ†ط·ط§ظ‚, “ظ‚ط±ط§ط،ط© ط§ظ„ط«ط±ظˆطھظ„ طھط¬ط§ظˆط²طھ 85%", "تحذير"),
+    _TempLow ("P0128"، "ط¯ط±ط¬ط© طط±ط§ط±ط© ط§ظ„طھط´ط؛ظٹظ„ ​​ظ…ظ†ط®ظپط¶ط©”، “ط§ظ„ظ…طط±ظƒ ط¯ظˆظ† ط¯ط±ط¬ط© ط§ظ„طھط´ط؛ظٹظ„ ط§ظ‹ظ…ط«ظ‹ظ‰”، “معلومات”)،
+]
+
+SEV_COLOR = {"critical": RED, "warning": YELLOW, "info": PRIMARY}
+SEV_LABEL = {"حرج": "طط±ط¬", "تحذير": "طھطط°ظٹط±", "معلومات": "ظ…ط¹ظ„ظˆظ…ط©"}
+
+
+# ————————————————————————————————————————————————————————— -------------------------------------------------------------------------------- --------------------------------------------------------------------------------
+
+def lerp(current: float, target: float, alpha: float) -> float:
+    أعد القيمة الحالية + (الهدف - القيمة الحالية) * ألفا
+
+
+# â’€â’€â’€ بطاقة الاستشعار (مقياس دائري) â’€ ...
+
+class SensorCard(ft.UserControl):
+    def __init__(self, title: str, unit: str, min_val: float, max_val: float,
+                 icon: str = ft.Icons.SPEED, warn_threshold: Optional[float] = None,
+                 الدقة: عدد صحيح = 0، غير متوفر: قيمة منطقية = خطأ):
+        super().__init__()
+        self.title = title
+        الوحدة الذاتية = الوحدة
+        self.min_val = min_val
+        self.max_val = max_val
+        اسم_الأيقونة_الذاتية = أيقونة
+        self.warn_threshold = warn_threshold
+        الدقة الذاتية = الدقة
+        self.unavailable = غير متاح
+        self._value = 0.0
+
+    def build(self):
+        self._value_text = ft.Text(
+            "–" إذا كان self.unavailable وإلا "0"،
+            الحجم=30، الوزن=ft.FontWeight.BOLD،
+            color=PRIMARY, text_align=ft.TextAlign.CENTER,
+        )
+        self._unit_text = ft.Text(
+            self.unit, size=11, color=TEXT_MUTED,
+            text_align=ft.TextAlign.CENTER,
+        )
+        self._na_badge = ft.Container(
+            content=ft.Text("ط؛ظٹط± ظ…طھط§ط", size=9, color=TEXT_MUTED),
+            bgcolor="#1e2d45", border_radius=8,
+            padding=ft.padding.symmetric(4, 6),
+            visible=self.unavailable,
+        )
+        self._gauge = ft.Canvas(shapes=[], width=120, height=120)
+        self._draw_gauge(0)
+        return ft.Container(
+            content=ft.Column([
+                ft.Stack([
+                    المقياس الذاتي،
+                    حاوية قدم (
+                        content=ft.Column([self._value_text, self._unit_text],
+                                         alignment=ft.MainAxisAlignment.CENTER,
+                                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                         (المسافة = 0)،
+                        alignment=ft.alignment.center,
+                        العرض = 120، الارتفاع = 120
+                    )
+                ]),
+                ft.Text(self.title, size=12, color=TEXT,
+                        text_align=ft.TextAlign.CENTER,
+                        الوزن = ft.FontWeight.W_600)،
+                self._na_badge,
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6),
+            bgcolor=CARD_BG,
+            border=ft.border.all(1, CARD_BORDER),
+            border_radius=14, padding=16, expand=True,
+        )
+
+    def _draw_gauge(self, pct: float):
+        cx, cy, r = 60, 60, 48
+        بداية المسح = 135، 270
+        الطرف_الفعال = البداية + المسح * النسبة المئوية
+        is_warn = (self.warn_threshold is not None
+                   و self._value >= self.warn_threshold
+                   (وليس ذاتيًا.غير متاح)
+        لون القوس = أحمر إذا كان تحذيرًا، وإلا فهو أساسي
+        self._gauge.shapes = [
+            ft.canvas.Arc(x=cx-r, y=cy-r, width=r*2, height=r*2,
+                          زاوية_البداية = math.radians(البداية)،
+                          زاوية_المسح = math.radians(المسح)،
+                          paint=ft.Paint(color="#1e293b",
+                                         style=ft.PaintingStyle.STROKE,
+                                         stroke_width=8,
+                                         stroke_cap=ft.StrokeCap.ROUND)),
+            ft.canvas.Arc(x=cx-r, y=cy-r, width=r*2, height=r*2,
+                          زاوية_البداية = math.radians(البداية)،
+                          زاوية_المسح=math.radians(max(0, active_end - start)),
+                          paint=ft.Paint(
+                              color=arc_color if not self.unavailable else "#1e293b",
+                              style=ft.PaintingStyle.STROKE,
+                              stroke_width=8,
+                              stroke_cap=ft.StrokeCap.ROUND)),
+        ]
+
+    دالة set_value(self, v: float):
+        إذا كان self.unavailable:
+            يعود
+        self._value = v
+        pct = max(0.0, min(1.0, (v - self.min_val) / (self.max_val - self.min_val)))
+        اللون = أحمر إذا كان (self.warn_threshold و v >= self.warn_threshold) وإلا PRIMARY
+        self._value_text.value = f"{v:.{self.precision}f}"
+        لون نص القيمة الذاتية = اللون
+        self._draw_gauge(pct)
+        self.update()
+
+
+# â’€â’€â’€ LinearCARD â’€ ...
+
+class LinearCard(ft.UserControl):
+    def __init__(self, title: str, unit: str, min_val: float, max_val: float,
+                 icon: str = ft.Icons.SPEED, precision: int = 0):
+        super().__init__()
+        self.title = title
+        الوحدة الذاتية = الوحدة
+        self.min_val = min_val
+        self.max_val = max_val
+        اسم_الأيقونة_الذاتية = أيقونة
+        الدقة الذاتية = الدقة
+
+    def build(self):
+        self._val_text = ft.Text(
+            f"0 {self.unit}", size=22,
+            الوزن = ft.FontWeight.BOLD، اللون = أساسي،
+        )
+        self._bar = ft.ProgressBar(value=0, bgcolor="#1e293b", color=PRIMARY,
+                                   الارتفاع = 8، نصف قطر الحواف = 4)
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(self.icon_name, color=PRIMARY, size=20),
+                    self._val_text,
+                    ft.Container(expand=True),
+                    ft.Text(self.title, size=12, color=TEXT,
+                            الوزن = ft.FontWeight.W_600)،
+                ]),
+                self._bar,
+            ], spacing=10),
+            bgcolor=CARD_BG,
+            border=ft.border.all(1, CARD_BORDER),
+            border_radius=14, padding=16,
+        )
+
+    دالة set_value(self, v: float):
+        pct = max(0.0, min(1.0, (v - self.min_val) / (self.max_val - self.min_val)))
+        self._val_text.value = f"{v:.{self.precision}f} {self.unit}"
+        قيمة الشريط الذاتي = النسبة المئوية
+        self.update()
+
+
+# ———— RpmHeroCard --------------------------------------------------------------------------------- ---------------------------------------------------------------------------------
+
+class RpmHeroCard(ft.UserControl):
+    def build(self):
+        self._val = ft.Text("0", size=64, weight=ft.FontWeight.W_900,
+                             color=PRIMARY, text_align=ft.TextAlign.CENTER)
+        self._bar = ft.ProgressBar(value=0, bgcolor="#1e293b", color=PRIMARY,
+                                    الارتفاع = 10، نصف قطر الحواف = 5)
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.SPEED, color=PRIMARY, size=32),
+                        ft.Text("ط³ط±ط¹ط© ط§ظ„ظ…طط±ظƒ", size=18,
+                                weight=ft.FontWeight.BOLD, color=TEXT)],
+                       alignment=ft.MainAxisAlignment.END, spacing=10),
+                ft.Container(content=ft.Column([
+                    self._val,
+                    ft.Text("RPM", size=14, color=TEXT_MUTED,
+                            text_align=ft.TextAlign.CENTER,
+                            الوزن = ft.FontWeight.W_600)،
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
+                    padding=ft.padding.symmetric(20, 0)),
+                self._bar,
+            ], spacing=8),
+            bgcolor=CARD_BG,
+            border=ft.border.all(1, PRIMARY_DIM),
+            border_radius=16, padding=20,
+            shadow=ft.BoxShadow(blur_radius=20, color=f"{PRIMARY}40"),
+        )
+
+    دالة set_value(self, v: float):
+        self._val.value = f"{int(v):,}"
+        self._bar.value = max(0.0, min(1.0, v / 8000))
+        self.update()
+
+
+# ————DtcPanel -------------------------------------------------------------------------------- ———————————————————————————————————————————————————————————————————————————————————————————-
+
+class DtcPanel(ft.UserControl):
+    def __init__(self):
+        super().__init__()
+        self._active: dict[str, DtcRule] = {}
+        self._dismissed: set[str] = set()
+
+    def build(self):
+        self._list_col = ft.Column(spacing=8)
+        self._no_codes = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=GREEN, size=28),
+                ft.Text("ظط§ طھظˆط¬ط¯ ط £ظƒظˆط§ط¯ ط £ط¹ط·ط§ظ„ ظ†ط´ط·ط©", الحجم=14, اللون=أخضر,
+                        الوزن = ft.FontWeight.W_600)،
+            ], spacing=12, alignment=ft.MainAxisAlignment.CENTER),
+            bgcolor="#052e16", border=ft.border.all(1, "#166534"),
+            border_radius=12, padding=16, visible=False,
+        )
+        self._disconnected = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.SHIELD_OUTLINED, color=TEXT_MUTED, size=28),
+                ft.Text("ظ‚ظ… ط¨طھظˆطμظٹظ„ ط§ظ„ط¬ظ‡ط§ط² ظظپطططط§ظ„ط £ط¹ط·ط§ظ„,
+                        الحجم = 13، اللون = نص مكتوم)،
+            ], spacing=12, alignment=ft.MainAxisAlignment.CENTER),
+            bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+            border_radius=12, padding=16,
+        )
+        return ft.Column([
+            ft.Row([ft.Icon(ft.Icons.SHIELD_OUTLINED, color=TEXT_MUTED, size=20),
+                    ft.Text("ط £ظƒظˆط§ط¯ ط§ظ"ط £ط¹ط·ط§ظ" (DTC)"، الحجم=16،
+                            weight=ft.FontWeight.BOLD, color=TEXT)],
+                   (المسافة = 10)،
+            self._disconnected, self._no_codes, self._list_col,
+        ], spacing=10)
+
+    def set_connected(self, c: bool):
+        self._disconnected.visible = not c
+        وإلا ج:
+            self._list_col.controls.clear()
+            self._active.clear()
+            self._dismissed.clear()
+        self.update()
+
+    def update_codes(self, active: list[DtcRule]):
+        self._active = {r.code: r for r in active}
+        visible = [r for r in active if r.code not in self._dismissed]
+        self._list_col.controls = [self._make_card(r) for r in visible]
+        self._no_codes.visible = not self._disconnected.visible and not visible
+        self.update()
+
+    def _make_card(self, rule: DtcRule) -> ft.Container:
+        color = SEV_COLOR.get(rule.severity, PRIMARY)
+
+        def dismiss(_e, code=rule.code):
+            self._dismissed.add(code)
+            self.update_codes(list(self._active.values()))
+
+        return ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=color, size=18),
+                ft.Column([
+                    ft.Row([
+                        ft.Text(rule.code, size=13, weight=ft.FontWeight.BOLD,
+                                color=TEXT, font_family="monospace"),
+                        ft.Container(content=ft.Text(SEV_LABEL.get(rule.severity,""), size=9, color=color),
+                                     border=ft.border.all(1, color),
+                                     border_radius=8, padding=ft.padding.symmetric(2, 6)),
+                    ], spacing=6),
+                    ft.Text(rule.name_ar, size=12, color=TEXT, weight=ft.FontWeight.W_600),
+                    ft.Text(rule.desc_ar, size=10, color=TEXT_MUTED),
+                ], spacing=3, expand=True),
+                ft.IconButton(icon=ft.Icons.CLOSE, icon_color=TEXT_MUTED,
+                              حجم_الأيقونة=16، عند_النقر=إغلاق)،
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.START),
+            bgcolor=f"{color}0d", border=ft.border.all(1, f"{color}40"),
+            border_radius=12, padding=12,
+        )
+
+
+# ————LogPanel -------------------------------------------------------------------------------- ———————————————————————————————————————————————————————————————————————————————————————————-
+
+class LogPanel(ft.UserControl):
+    def __init__(self):
+        super().__init__()
+        self._session_start: Optional[datetime] = None
+        عدد_الرموز_الرقمية_الخاصة_بـ_self = 0
+        عدد الضربات الحرجة الذاتية = 0
+
+    def build(self):
+        self._dur_text = ft.Text("â€”", size=18, weight=ft.FontWeight.BOLD, color=TEXT)
+        self._dtc_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=TEXT)
+        self._crit_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=TEXT)
+        self._log_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=240)
+        self._empty = ft.Container(
+            content=ft.Column([
+                ft.Icon(ft.Icons.HISTORY_OUTLINED, color=TEXT_MUTED, size=36),
+                ft.Text("ظ‚ظ… ط¨طھظˆطμظٹظ„ ط§ظ„ط¬ظ‡ط§ط² ظ„ط¨ط¯ط، ط§ظ„طھط³ط¬ظٹظ„,
+                        الحجم=12، اللون=نص_صامت، محاذاة_النص=ft.TextAlign.CENTER)،
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+            alignment=ft.alignment.center, height=180,
+        )
+
+        دالة clear(_e):
+            self._log_col.controls.clear()
+            self._dtc_count = self._crit_count = 0
+            self._dtc_text.value = self._crit_text.value = "0"
+            لون النص الحرج = نص
+            self._empty.visible = True
+            self.update()
+
+        return ft.Column([
+            ft.Row([
+                ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, color=TEXT_MUTED, size=20),
+                ft.Text("ط³ط¬ظ„ ط§ظ„ط¨ظٹط§ظ†ط§طھ ط§ظ„طظٹ), الحجم=16,
+                        الوزن = ft.FontWeight.BOLD، اللون = نص)،
+                ft.Container(expand=True),
+                ft.TextButton("ظ…ط³ط ط§ظ„ط³ط¬ظ„", on_click=clear,
+                              style=ft.ButtonStyle(color=TEXT_MUTED)),
+            ], spacing=10),
+            ft.Row([
+                self._stat("ظ…ط¯ط© ط§ظ„ط¬ظ„ط³ط©", self._dur_text),
+                self._stat("ط£طط¯ط§ط« DTC", self._dtc_text),
+                self._stat("ط£ط¹ط·ط§ظ„ طط±ط¬ط©", self._crit_text),
+            ], spacing=8),
+            حاوية قدم (
+                content=ft.Column([self._empty, self._log_col], spacing=0),
+                bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+                border_radius=14, padding=8,
+            )
+        ], spacing=10)
+
+    def _stat(self, label: str, ctrl: ft.Control) -> ft.Container:
+        return ft.Container(
+            content=ft.Column([ctrl, ft.Text(label, size=10, color=TEXT_MUTED,
+                                              text_align=ft.TextAlign.CENTER)],
+                              horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+            bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+            border_radius=12, padding=ft.padding.symmetric(10, 16), expand=True,
+        )
+
+    def set_session_start(self, dt: Optional[datetime]):
+        self._session_start = dt
+        إذا كانت قيمة dt تساوي None:
+            self._dur_text.value = "â€""
+        self.update()
+
+    def tick(self):
+        إذا كان self._session_start:
+            s = int((datetime.now() - self._session_start).total_seconds())
+            m, s = divmod(s, 60); h, m = divmod(m, 60)
+            self._dur_text.value = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+            self.update()
+
+    def push(self, event_type: str, code: Optional[str] = None,
+             name_ar: Optional[str] = None, severity: Optional[str] = None):
+        اللون = {"متصل": أساسي، "غير متصل": كتم النص،
+                  "dtc_trigger": أحمر، "dtc_clear": أخضر}
+        ICON = {"connected": ft.Icons.WIFI, "disconnected": ft.Icons.WIFI_OFF,
+                  "dtc_trigger": ft.Icons.ARROW_UPWARD,
+                  "dtc_clear": ft.Icons.ARROW_DOWNWARD}
+        LABEL = {"connected": "ط§طھطµط§ظ"", "disconnected": "ظ‚ط·ط¹ ط§طھطµط§ظ"",
+                  "dtc_trigger": "ط¸ظ‡ط±", "dtc_clear": "ط§ط®طھظپظ‰"}
+
+        إذا كان نوع الحدث يساوي "dtc_trigger":
+            self._dtc_count += 1
+            self._dtc_text.value = str(self._dtc_count)
+            إذا كانت الخطورة = "حرجة":
+                self._crit_count += 1
+                self._crit_text.value = str(self._crit_count)
+                لون النص الحرج = أحمر
+
+        c = COLOR.get(event_type, TEXT_MUTED)
+        ts = datetime.now().strftime("%H:%M:%S")
+        صحيح: list[ft.Control] = ([
+            ft.Text(code or "", size=12, weight=ft.FontWeight.BOLD,
+                    color=TEXT, font_family="monospace"),
+            ft.Text(LABEL.get(event_type, ""), size=11, color=c),
+            ft.Text(name_ar or "", size=10, color=TEXT_MUTED),
+        ] إذا كان الرمز صحيحًا، وإلا [ft.Text(LABEL.get(event_type, event_type),
+                                الحجم = 12، اللون = c، الوزن = ft.FontWeight.W_600)])
+
+        self._log_col.controls.insert(0, ft.Container(
+            content=ft.Row([
+                ft.Icon(ICON.get(event_type, ft.Icons.CIRCLE), color=c, size=14),
+                ft.Text(ts, size=10, color=TEXT_MUTED,
+                        font_family="monospace", width=70),
+                ft.Row(right, spacing=6, expand=True),
+            ], spacing=8),
+            padding=ft.padding.symmetric(8, 4),
+        ))
+        self._log_col.controls = self._log_col.controls[:200]
+        self._empty.visible = False
+        self.update()
+
+
+# â’€âрâрâр صفحة الإعدادات â’€âрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâрâр
+
+class SettingsPage(ft.UserControl):
+    """
+    شاشة الإعدادات الكاملة:
+      • مُحدد نوع الاتصال (محاكاة / بلوتوث / واي فاي / يو إس بي)
+      • حقول تفاصيل الاتصال الديناميكية لكل نوع
+      • مُحدد معدل الباود للاتصالات التسلسلية
+      • مفتاح التبديل للاتصال التلقائي عند بدء التشغيل
+      • أزرار حفظ / اختبار الاتصال
+    """
+
+    def __init__(self, settings: dict, on_save, on_test):
+        super().__init__()
+        self._s = dict(settings) # نسخة محلية - تُكتب مرة أخرى عند الحفظ
+        self.on_save = on_save
+        self.on_test = on_test
+
+    # â’€â’€ بناء â’€ ...
+
+    def build(self):
+        # â’€â’€ نوع الاتصال مجموعة الراديو â’€ ...
+        TYPE_OPTS = [
+            ("محاكاة"، "ظ…ط§ظƒط§ط©"، ft.Icons.MONITOR، "ظط§ ظٹظ"ط²ظ… ط¬ظ‡ط§ط² —” ظ…ط«ط§ظ„ظٹ ظظ„ط§ط®طھط¨ط§ط±”)،
+            ("Bluetooth"، "ط¨ظظˆطھظˆط«"، ft.Icons.BLUETOOTH، "ELM327 ط¨ظ„ظˆطھظˆط« — ظ‚ط±ظ† ط§ظ‹ط¬ظ‡ط§ط² ط £ظˆظ‹ط§ظ‹”)),
+            ("wifi"، "Wi-Fi"، ft.Icons.WIFI، "ELM327 ظˆط§ظٹ ظپط§ظٹ â —” ط§طھطμظ„ ط¨ط´ط¨ظƒط© ط§ظ„ظ…طظˆظ„”)،
+            ("usb"، "USB"، ft.Icons.USB، "ظƒط§ط¨ظ„ USB – ظٹطھط·ظ„ط¨ ط±ظˆطھ ط £ظˆ ط§ظ„ظƒظ…ط¨ظٹظˆطھط±”)،
+        ]
+
+        self._type_buttons: dict[str, ft.ElevatedButton] = {}
+
+        دالة make_type_btn(key, label, icon, hint):
+            is_active = self._s["connection_type"] == key
+            btn = ft.ElevatedButton(
+                ملصق،
+                icon=icon,
+                bgcolor=PRIMARY إذا كان نشطًا، وإلا CARD_BG،
+                color="white" if is_active else TEX_MUTED,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                الارتفاع = 44،
+                البيانات=المفتاح،
+                on_click=self._on_type_change,
+                tooltip=hint,
+            )
+            self._type_buttons[key] = btn
+            زر الإرجاع
+
+        type_row = ft.Column([
+            ft.Text("ظ†ظˆط¹ ط§ظ„ط§طھطµط§ظ„", size=13, color=TEXT_MUTED,
+                    الوزن = ft.FontWeight.W_600)،
+            ft.ResponsiveRow([
+                ft.Column([make_type_btn(*o)], col={"xs": 6, "md": 3})
+                for o in TYPE_OPTS
+            ], spacing=8, run_spacing=8),
+        ], spacing=10)
+
+        # — — حقول البلوتوث ------------------------------------------------------------------------------------------ ——————————————————————————————————————————————————————————————————————————————————————-
+        self._bt_port = ft.TextField(
+            label="ظ…ظ†ظپط° ط§ظ"ط¨ظ"ظˆطھظˆط«"،
+            Hint_text="/dev/rfcomm0 ط £ظˆ COM3"،
+            value=self._s["bt_port"],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+        )
+        self._bt_baud = ft.Dropdown(
+            التسمية = "ط³ط±ط¹ط© ط§ظ"ط§طھطμط§ظ" (باود)"،
+            value=self._s["bt_baud"],
+            الخيارات = [ft.dropdown.Option("9600"), ft.dropdown.Option("38400"),
+                     ft.dropdown.Option("115200")],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+        )
+        self._bt_hint = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.INFO_OUTLINE, color=PRIMARY, size=16),
+                ft.Text(
+                    "ط§ط°ظ‡ط¨ ط¥ظ„ظ‰ ط¥ط¹ط¯ط§ط¯ط§طھ Android †گ ط§ظ„ط¨ظ„ظˆطھظˆط« †گ ظ‚ط±ظ† ط§ظ„ط¬ظ‡ط§ط² ط £ظˆظ„ط§ظ‹.\n”
+                    "ط¨ط¹ط¯ ط§ظ‹ط§ظ‚طھط±ط§ظ† ظٹط¸ظ‡ط± طھظ‹ظ‚ط§ط¦ظٹط§ظ‹ ظƒظ€ /dev/rfcomm0",
+                    الحجم = 11، اللون = نص مكتوم،
+                )
+            ], spacing=8),
+            bgcolor=f"{PRIMARY}0d", border=ft.border.all(1, f"{PRIMARY}25"),
+            border_radius=10, padding=12,
+        )
+        self._bt_section = ft.Column(
+            [self._bt_hint, self._bt_port, self._bt_baud], spacing=10,
+            visible=self._s["connection_type"] == "bluetooth",
+        )
+
+        # - حقول Wi-Fi --------------------------------------------------------------------------------------- ——————————————————————————————————————————————————————————————————————————————————————-
+        self._wifi_host = ft.TextField(
+            label="ط¹ظ†ظˆط§ظ† IP ظ„ظ„ظ…طظˆظ„,
+            hint_text="192.168.0.10",
+            value=self._s["wifi_host"],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+        )
+        self._wifi_port = ft.TextField(
+            التسمية = "ط±ظ‚ظ… ط§ظ„ظ…ظ†ظپط° (المنفذ)"،
+            hint_text="35000",
+            value=self._s["wifi_port"],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
+        self._wifi_hint = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.INFO_OUTLINE, color=PRIMARY, size=16),
+                ft.Text(
+                    "ظˆط§ظ'ظ ط§ظ„ظ‡ط§طھظپ ط¨ط´ط¨ظƒط© Wi-Fi ط§ظ„ط®ط§طط© ط¨ظ…طظˆظ„ ELM327.\n"
+                    "ط¹ط§ط¯ط©ظ‹ IP: 192.168.0.10 ظˆظ…ظ†ظپط°: 35000"،
+                    الحجم = 11، اللون = نص مكتوم،
+                )
+            ], spacing=8),
+            bgcolor=f"{PRIMARY}0d", border=ft.border.all(1, f"{PRIMARY}25"),
+            border_radius=10, padding=12,
+        )
+        self._wifi_section = ft.Column(
+            [self._wifi_hint, self._wifi_host, self._wifi_port], spacing=10,
+            visible=self._s["connection_type"] == "wifi",
+        )
+
+        # حقول USB
+        self._usb_port = ft.TextField(
+            التسمية = "ظ…ظ†ظپط° USB"،
+            hint_text="/dev/ttyUSB0 ط £ظˆ COM3"،
+            value=self._s["usb_port"],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+        )
+        self._usb_baud = ft.Dropdown(
+            التسمية = "ط³ط±ط¹ط© ط§ظ"ط§طھطμط§ظ" (باود)"،
+            value=self._s["usb_baud"],
+            الخيارات = [ft.dropdown.Option("9600"), ft.dropdown.Option("38400"),
+                     ft.dropdown.Option("115200")],
+            bgcolor=BG, color=TEXT,
+            border_color=CARD_BORDER, focused_border_color=PRIMARY,
+        )
+        self._usb_hint = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=YELLOW, size=16),
+                ft.Text(
+                    "USB ط§ظ„ظ…ط¨ط§ط´ط± ظٹطھط·ظ„ط¨ ط±ظˆطھ ط¹ظ„ظ‰ Android.\n"
+                    "ط¹ظ„ظ‰ ط§ظ„ظƒظ…ط¨ظٹظˆطھط±: /dev/ttyUSB0 (Linux) ط £ظˆ COM3 (Windows)."،
+                    الحجم = 11، اللون = نص مكتوم،
+                )
+            ], spacing=8),
+            bgcolor=f"{YELLOW}0d", border=ft.border.all(1, f"{YELLOW}25"),
+            border_radius=10, padding=12,
+        )
+        self._usb_section = ft.Column(
+            [self._usb_hint, self._usb_port, self._usb_baud], spacing=10,
+            visible=self._s["connection_type"] == "usb",
+        )
+
+        # â’€â’€ تبديل الاتصال التلقائي â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€
+        self._auto_sw = ft.Switch(
+            label="ط§طھطμط§ظ" طھظ"ظ‚ط§ط¦ظٹ ط¹ظ†ط¯ ط¨ط¯ط، ط§ظ„طھط´ط;ظٹظ„,
+            value=self._s["auto_connect"],
+            active_color=PRIMARY,
+            label_style=ft.TextStyle(اللون=النص، الحجم=13)،
+            on_change=lambda e: self._set("auto_connect", e.control.value),
+        )
+
+        # â’€â’€ أزرار الحفظ / الاختبار â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€â’€
+        self._status_text = ft.Text("", size=12, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER)
+
+        save_btn = ft.ElevatedButton(
+            "طظپط¸ ط§ظ"ط¥ط¹ط¯ط§ط¯ط§طھ",
+            icon=ft.Icons.SAVE_OUTLINED,
+            bgcolor=PRIMARY, color="white",
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+            on_click=self._save,
+            الارتفاع = 48، التوسيع = صحيح،
+        )
+        test_btn = ft.OutlinedButton(
+            "ط§ط®طھط¨ط§ط± ط§ظ„ط§طھطµط§ظ„",
+            icon=ft.Icons.CABLE,
+            style=ft.ButtonStyle(
+                اللون=كتم_النص،
+                shape=ft.RoundedRectangleBorder(radius=10),
+            )
+            on_click=self._test,
+            الارتفاع = 48، التوسيع = صحيح،
+        )
+
+        # - التخطيط -------------------------------------------------------------------------------------- —————————————————————————————————————————————————————————————————————————————————————————-
+        def card(title: str, icon: str, content: ft.Control) -> ft.Container:
+            return ft.Container(
+                content=ft.Column([
+                    ft.Row([ft.Icon(icon, color=PRIMARY, size=18),
+                            ft.Text(title, size=14, weight=ft.FontWeight.BOLD,
+                                    color=TEXT)], spacing=10),
+                    ft.Divider(height=1, color=CARD_BORDER),
+                    محتوى،
+                ], spacing=14),
+                bgcolor=CARD_BG,
+                border=ft.border.all(1, CARD_BORDER),
+                border_radius=16, padding=18,
+            )
+
+        return ft.Column([
+            ft.Text("ط§ظ„ط¥ط¹ط¯ط§ط¯ط§طھ", size=22, weight=ft.FontWeight.BOLD,
+                    color=TEXT, text_align=ft.TextAlign.RIGHT),
+            card("ظ†ظˆط¹ ط§ظ„ط§طھطµط§ظ„", ft.Icons.SETTINGS_INPUT_COMPONENT_OUTLINED, type_row),
+            card("ط¥ط¹ط¯ط§ط¯ط§طھ ط§ظ„ط§طھطµط§ظ„", ft.Icons.CABLE, ft.Column([
+                self._bt_section,
+                قسم الواي فاي الذاتي،
+                قسم USB الخاص بـ self.
+            ], spacing=0)),
+            بطاقة ("ط§ظ"ط³ظ"ظˆظƒ"، ft.Icons.TUNE، self._auto_sw)،
+            ft.Row([save_btn, test_btn], spacing=12),
+            self._status_text,
+            # حول
+            حاوية قدم (
+                content=ft.Column([
+                    ft.Text("SINDBAD OBD PRO", size=14,
+                            الوزن = ft.FontWeight.BOLD، اللون = نص،
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text("v1.0 — Python + Flet + python-obd",
+                            الحجم = 11، اللون = نص مكتوم،
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text("ظ…ط¯ط¹ظˆظ…: ELM327 v1.5+ (ط¨ظ„ظˆطھظˆط« / ظˆط§ظٹ ظپط§ظٹ / USB)",
+                            الحجم = 11، اللون = نص مكتوم،
+                            text_align=ft.TextAlign.CENTER),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
+                bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+                border_radius=14, padding=16,
+            )
+        ], spacing=16, scroll=ft.ScrollMode.AUTO)
+
+    # â’€â’€ معالجات الأحداث â’€ ...
+
+    def _set(self, key: str, value):
+        self._s[key] = value
+
+    def _on_type_change(self, e: ft.ControlEvent):
+        t = e.control.data
+        self._s["connection_type"] = t
+        for k, btn in self._type_buttons.items():
+            btn.bgcolor = PRIMARY if k == t else CARD_BG
+            btn.color = "white" if k == t else TEXT_MUTED
+        self._bt_section.visible = t == "bluetooth"
+        self._wifi_section.visible = t == "wifi"
+        self._usb_section.visible = t == "usb"
+        self._status_text.value = ""
+        self.update()
+
+    def _collect(self):
+        """اقرأ جميع قيم الحقول مرة أخرى في self._s.""""
+        self._s["bt_port"] = self._bt_port.value.strip()
+        self._s["bt_baud"] = self._bt_baud.value or "38400"
+        self._s["wifi_host"] = self._wifi_host.value.strip()
+        self._s["wifi_port"] = self._wifi_port.value.strip()
+        self._s["usb_port"] = self._usb_port.value.strip()
+        self._s["usb_baud"] = self._usb_baud.value or "38400"
+
+    def _save(self, _e):
+        self._collect()
+        self.on_save(dict(self._s))
+        self._status_text.value = "âœ“ طھظ… طظپط¸ ط§ظ„ط¥ط¹ط¯ط§ط¯ط§طھ ط¨ظ†ط¬ط§ط”
+        لون نص الحالة = أخضر
+        self.update()
+
+    def _test(self, _e):
+        self._collect()
+        self._status_text.value = "ط¬ط§ط±ظچ ط§ط®طھط¨ط§ط± ط§ظ„ط§طھطµط§ظ„…"
+        لون نص الحالة = TEXT_MUTED
+        self.update()
+        self.on_test(dict(self._s), self._on_test_result)
+
+    def _on_test_result(self, success: bool, message: str):
+        self._status_text.value = message
+        self._status_text.color = GRENE if success else RED
+        self.update()
+
+    def refresh(self, settings: dict):
+        ""يتم استدعاؤها من قبل الوالد عند تغيير الإعدادات الخارجية."""
+        self._s = dict(settings)
+
+
+# ———OBD2Worker ------------------------------------------------------------------------------- —————————————————————————————————————————————————————————————————————————————————————————-
+
+فئة OBD2Worker:
+    """يقرأ بيانات المستشعر في سلسلة عمليات خلفية."""
+
+    def __init__(self, on_data, on_dtcs, on_disconnect):
+        self._on_data = on_data
+        self._on_dtcs = on_dtcs
+        self._on_disconnect = on_disconnect
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._conn = None
+        self._sim = {"rpm": 850, "temp": 88, "throttle": 5,
+                     "السرعة": 0، "البطارية": 13.8}
+
+    def start(self, settings: dict):
+        self._settings = settings
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        إذا كان self._conn:
+            حاول: self._conn.close()
+            باستثناء الاستثناء: تمرير
+            self._conn = None
+
+    def test_connection(self, settings: dict, callback):
+        """اختبار لمرة واحدة في سلسلة عمليات خلفية."""
+        def _test():
+            إذا كانت الإعدادات["نوع_الاتصال"] تساوي "محاكاة":
+                رد الاتصال(صحيح، "œ“ ظˆط¶ط¹ ط§ظ„ظ…طط§ظƒط§ط© ظٹط¹ظ…ظ„ ط¯ط§ط¦ظ…ط§ظ‹”)
+                يعود
+            إذا لم يكن OBD_AVAILABLE:
+                رد اتصال (خطأ، "âœ— ظ…ظƒطھط¨ط© obd ط؛ظٹط± ظ…ط«ط¨طھ©»)
+                يعود
+            يحاول:
+                port = build_port_string(settings)
+                conn = obd.OBD(portstr=port or None, fast=False, timeout=5)
+                إذا كان الاتصال موجودًا:
+                    callback(True, f"âœ“ ط§طھطµط§ظ„ ظ†ط§ط¬ط: {conn.port_name()}")
+                آخر:
+                    رد الاتصال(خطأ، "œ— طھط¹ط°ظ'ط± ط§ظ„ط§طھطμط§ظ„ âœ— طھطظ‚ظ‚ ظ…ظ† ط§ظ„ط¥ط¹ط¯ط§ط¯ط§طھ”)
+                conn.close()
+            باستثناء الاستثناء كما يلي:
+                رد الاتصال (False، f"âœ— ط®ط·ط £: {exc}")
+        threading.Thread(target=_test, daemon=True).start()
+
+    def _run(self):
+        إذا كان self._settings.get("connection_type") == "simulation":
+            self._run_simulation()
+        آخر:
+            self._run_device()
+
+    def _run_simulation(self):
+        targets = dict(self._sim)
+        أثناء تشغيل self._running:
+            targets.update({"rpm": random.uniform(600, 7200),
+                            "temp": random.uniform(75, 108),
+                            "throttle": random.uniform(0, 90),
+                            "السرعة": عشوائي.موحد(0، 180)،
+                            "البطارية": عشوائي.موحد(11.5، 15.0)})
+            for _ in range(8):
+                إذا لم يكن self._running: توقف
+                for k in self._sim:
+                    self._sim[k] = lerp(self._sim[k], targets[k], 0.15)
+                self._on_data(dict(self._sim))
+                time.sleep(0.2)
+
+    def _run_device(self):
+        إذا لم يكن OBD_AVAILABLE:
+            self._on_disconnect("ظ…ظƒطھط¨ط© obd ط؛ظٹط± ظ…طھظˆظپط±ط© â —” ط´ط؛ظ'ظ: pip install obd")
+            يعود
+        يحاول:
+            port = build_port_string(self._settings)
+            self._conn = obd.OBD(portstr=port or None, fast=False, timeout=5)
+            إذا لم يكن الاتصال موجودًا:
+                self._on_disconnect("طھط¹ط°ظ'ط± ط§ظ„ط§طھط´ط§ظ„ â€” طھطظ‚ظ‚ ظ…ظ† طھظˆطظٹظ„ ط§ظ„ط¬ظ‡ط§ط² ظˆطھط´ط;ظٹظ„ ط§ظ„ظ…طط±ظƒ”)
+                يعود
+            dtc_resp = self._conn.query(obd.commands.GET_DTC)
+            إذا لم تكن dtc_resp.is_null():
+                self._on_dtcs([e[0] for e in (dtc_resp.value or [])])
+            CMDS = {"rpm": obd.commands.RPM, "speed": obd.commands.SPEED,
+                    "درجة الحرارة": obd.commands.COOLANT_TEMP,
+                    "throttle": obd.commands.THROTTLE_POS}
+            بينما يكون self._running و self._conn.is_connected():
+                البيانات: قاموس = {}
+                for k, cmd in CMDS.items():
+                    يحاول:
+                        r = self._conn.query(cmd)
+                        إذا لم يكن r.is_null() وكان r.value ليس None:
+                            data[k] = float(r.value.magnitude)
+                    باستثناء الاستثناء:
+                        يمر
+                إذا كانت البيانات:
+                    self._on_data(data)
+                time.sleep(0.5)
+            إذا كان self._running:
+                self._on_disconnect("ط§ظ†ظ‚ط·ط¹ ط§ظ„ط§طھطµط§ظ„ ط¨ط§ظ„ط¬ظ‡ط§ط²")
+        باستثناء الاستثناء كما يلي:
+            self._on_disconnect(f"ط®ط·ط £ ظپظٹ ط§ظ„ط§طھطμط§ظ„: {exc}")
+
+
+# â’€âрâрâр Main â’€âр ...
+
+def main(page: ft.Page):
+    page.title = "SINDBAD OBD PRO"
+    page.bgcolor = BG
+    page.padding = 0
+    page.rtl = True
+    page.theme_mode = ft.ThemeMode.DARK
+    page.window_min_width = 360
+
+    # ← تحميل/حفظ الإعدادات عبر وحدة تخزين عميل Flet (تبقى محفوظة على الجهاز) ← ← ← ← ←
+    def load_settings() -> dict:
+        s = dict(DEFAULT_SETTINGS)
+        for k, v in DEFAULT_SETTINGS.items():
+            stored = page.client_storage.get(f"{STORAGE_KEY}.{k}")
+            إذا لم تكن القيمة المخزنة فارغة:
+                s[k] = مخزنة
+        أعد s
+
+    دالة حفظ_الإعدادات(s: قاموس):
+        الإعدادات الحالية غير المحلية
+        الإعدادات_الحالية = s
+        for k, v in s.items():
+            page.client_storage.set(f"{STORAGE_KEY}.{k}", v)
+        # تبديل وضع لوحة التحكم المتزامنة
+        _update_conn_mode_ui()
+
+    current_settings: dict = load_settings()
+
+    # â◀â◀ State â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀â◀
+    متصل = خطأ
+    prev_codes: set[str] = set()
+
+    العامل = عامل OBD2(
+        on_data=lambda d: _on_data(d),
+        on_dtcs=lambda c: _on_dtcs(c),
+        on_disconnect=lambda m: _on_disconnect(m),
+    )
+
+    # ——— أدوات الاستشعار ------------------------------------------------------------------------------------ ——————————————————————————————————————————————————————————————————————————————————————-
+    rpm_card = RpmHeroCard()
+    spd_card = SensorCard("ط³ط±ط¹ط© ط§ظ„ط³ظٹط§ط±ط©", "كم/س", 0, 200,
+                          icon=ft.Icons.DIRECTIONS_CAR_OUTLINED)
+    tmp_card = SensorCard("طط±ط§ط±ط© ط§ظ„ظ…طط±ظƒ", "آ°م", 60, 120,
+                          icon=ft.Icons.THERMOSTAT_OUTLINED, warn_threshold=95)
+    thr_card = LinearCard("ط¨ظˆط§ط¨ط© ط§ظ„ط«ط±ظˆطھظ„", "%", 0, 100, icon=ft.Icons.SPEED)
+    Oil_card = SensorCard("ط¶ط؛ط·ط§ظ„ط²ظٹطھ"، "bar"، 0، 6،
+                          icon=ft.Icons.OIL_BARREL_OUTLINED,
+                          غير متاح = (إعدادات_الحالية["نوع_الاتصال"] != "محاكاة"))
+    bat_card = LinearCard("ط¬ظ‡ط¯ ط§ظ„ط¨ط·ط§ط±ظٹط©", "V", 10, 16,
+                          icon=ft.Icons.BATTERY_CHARGING_FULL_OUTLINED, precision=1)
+    dtc_panel = DtcPanel()
+    log_panel = LogPanel()
+
+    # ——— عناصر واجهة المستخدم للرأس ------------------------------------------------------------------------------------ ——————————————————————————————————————————————————————————————————————————————————————-
+    status_dot = ft.Container(width=10, height=10, border_radius=5, bgcolor=RED)
+    Status_txt = ft.Text("ط؛ظٹط± ظ…طھطμظ„"، الحجم=12، اللون=TEXT_MUTED)
+    mode_badge = ft.Container(
+        content=ft.Text("ظ…طط§ظƒط§ط©", size=10, color=TEXT_MUTED),
+        border=ft.border.all(1, CARD_BORDER), border_radius=8,
+        padding=ft.padding.symmetric(2, 8),
+    )
+    connect_btn = ft.ElevatedButton(
+        "ط§طھطµط§ظ"
+        icon=ft.Icons.POWER_SETTINGS_NEW_ROUNDED,
+        bgcolor=PRIMARY, color="white",
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+        on_click=lambda e: (on_connect_btn(e)),
+        الارتفاع = 44،
+    )
+
+    stored_dtc_col = ft.Column(spacing=8, visible=False)
+
+    # ردود الاتصال
+
+    def _update_conn_mode_ui():
+        labels = {"simulation": "ظ…ط§ظƒط§ط©", "bluetooth": "ط¨ظ„ظˆطھظˆط«",
+                  "wifi": "Wi-Fi", "usb": "USB"}
+        mode_badge.content.value = labels.get(current_settings["connection_type"], "")
+        oil_card.unavailable = current_settings["connection_type"] != "simulation"
+        يحاول:
+            mode_badge.update()
+        باستثناء الاستثناء:
+            يمر
+
+    def _on_data(data: dict):
+        الرموز السابقة غير المحلية
+        إذا كانت قيمة "rpm" موجودة في البيانات: rpm_card.set_value(data["rpm"])
+        إذا كانت كلمة "speed" موجودة في البيانات: spd_card.set_value(data["speed"])
+        إذا كانت قيمة "temp" موجودة في البيانات: tmp_card.set_value(data["temp"])
+        إذا كانت كلمة "throttle" موجودة في البيانات: thr_card.set_value(data["throttle"])
+        إذا كانت كلمة "battery" موجودة في البيانات: bat_card.set_value(data["battery"])
+
+        v = {k: data.get(k, 0) for k in ("rpm","temp","throttle","speed","battery")}
+        نشط = [r لكل r في DTC_RULES
+                  إذا تم تشغيل r.triggered(v["rpm"],v["temp"],v["throttle"],v["speed"],v["battery"])]
+        dtc_panel.update_codes(active)
+        cur = {r.code for r in active}
+        for r in active:
+            إذا لم يكن r.code موجودًا في prev_codes:
+                log_panel.push("dtc_trigger", r.code, r.name_ar, r.severity)
+        for code in prev_codes - cur:
+            rule = next((r for r in DTC_RULES if r.code == code), None)
+            log_panel.push("dtc_clear", code,
+                           rule.name_ar if rule else None,
+                           rule.severity if rule else None)
+        prev_codes = Cur
+
+    def _on_dtcs(codes: list[str]):
+        stored_dtc_col.visible = True
+        stored_dtc_col.controls = ([
+            ft.Row([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=YELLOW, size=16),
+                    ft.Text(c, size=13, weight=ft.FontWeight.BOLD,
+                            color=TEXT, font_family="monospace")], spacing=8)
+            for c in codes
+        ] أو [ft.Text("ظط§ طھظˆط¬ط¯ ط £ظƒظˆط§ط¯ ظ…ط®ط²ظ†ط© ظپظٹ ECU, الحجم=12, اللون=أخضر)])
+        stored_dtc_col.update()
+
+    def _on_disconnect(message: str = ""):
+        متصل غير محلي
+        متصل = خطأ
+        worker.stop()
+        status_dot.bgcolor = RED
+        status_txt.value = message or "ط§ظ†ظ‚ط·ط¹ ط§ظ„ط§طھطµط§ظ„"
+        connect_btn.text = "ط§طھطµط§ظ"
+        connect_btn.icon = ft.Icons.POWER_SETTINGS_NEW_ROUNDED
+        لون خلفية زر الاتصال = أساسي
+        stored_dtc_col.visible = False
+        dtc_panel.set_connected(False)
+        log_panel.set_session_start(None)
+        log_panel.push("disconnected")
+        page.update()
+
+    def _do_connect():
+        متصل غير محلي، الرموز السابقة
+        متصل = صحيح
+        prev_codes = set()
+        status_dot.bgcolor = GREEN
+        Status_txt.value = "ظ…طھطμظ„ ط¨ظ†ط¬ط§ط (OBD2)"
+        connect_btn.text = "ظ‚ط·ط¹ ط§ظ„ط§طھطµط§ظ„"
+        connect_btn.icon = ft.Icons.STOP_CIRCLE_OUTLINED
+        لون خلفية زر الاتصال = أحمر
+        dtc_panel.set_connected(True)
+        log_panel.set_session_start(datetime.now())
+        log_panel.push("connected")
+        _update_conn_mode_ui()
+        page.update()
+        worker.start(settings=current_settings)
+
+    دالة on_connect_btn(_e):
+        في حالة الاتصال:
+            _on_disconnect()
+        آخر:
+            _do_connect()
+
+    def on_settings_save(s: dict):
+        حفظ_الإعدادات(ات)
+        page.update()
+
+    def on_settings_test(s: dict, callback):
+        worker.test_connection(s, callback)
+
+    # مؤقت الجلسة
+    def _tick():
+        بينما صحيح:
+            time.sleep(1)
+            حاول: log_panel.tick()
+            باستثناء الاستثناء: تمرير
+    threading.Thread(target=_tick, daemon=True).start()
+
+    # â’€â’€ الاتصال التلقائي عند بدء التشغيل â’€ ...
+    إذا كانت قيمة current_settings.get("auto_connect") و current_settings["connection_type"] لا تساوي "simulation":
+        threading.Timer(1.5, _do_connect).start()
+
+    # صفحات
+
+    _update_conn_mode_ui()
+
+    def _make_header() -> ft.Container:
+        return ft.Container(
+            content=ft.Row([
+                ft.Row([
+                    حاوية قدم (
+                        content=ft.Icon(ft.Icons.MONITOR_HEART, color=PRIMARY, size=28),
+                        bgcolor=f"{PRIMARY}1a",
+                        border=ft.border.all(1, f"{PRIMARY}33"),
+                        border_radius=12, padding=10,
+                        shadow=ft.BoxShadow(blur_radius=16, color=f"{PRIMARY}33"),
+                    )
+                    ft.Column([
+                        ft.Text("SINDBAD OBD PRO", size=18,
+                                الوزن = ft.FontWeight.BOLD، اللون = أبيض"),
+                        ft.Row([status_dot, status_txt, mode_badge], spacing=8),
+                    ], spacing=4),
+                ], spacing=12),
+                ft.Container(expand=True),
+                زر الاتصال،
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.padding.only(left=16, right=16, top=16, bottom=12),
+            border=ft.border.only(bottom=ft.BorderSide(1, CARD_BORDER)),
+        )
+
+    dashboard_page = ft.Column([
+        ft.ResponsiveRow([
+            ft.Column([rpm_card], col={"xs": 12, "md": 8}),
+            ft.Column([spd_card], col={"xs": 12, "md": 4}),
+            ft.Column([tmp_card], col={"xs": 12, "md": 4}),
+            ft.Column([thr_card], col={"xs": 12, "md": 8}),
+            ft.Column([oil_card], col={"xs": 12, "md": 4}),
+            ft.Column([bat_card], col={"xs": 12, "md": 8}),
+        ], spacing=12, run_spacing=12),
+        ft.Container(content=dtc_panel,
+                     bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+                     border_radius=14, padding=16),
+        حاوية قدم (
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.ELECTRICAL_SERVICES, color=TEXT_MUTED, size=18),
+                        ft.Text("ط £ظƒظˆط§ط¯ ECU ط§ظ"ظ…ط®ط²ظ†ط©", size=15,
+                                الوزن = ft.FontWeight.BOLD، اللون = نص)،
+                        ft.Container(content=ft.Text("ط¬ظ‡ط§ط² طظ‚ظٹظ‚ظٹ", size=9, color=TEXT_MUTED),
+                                     border=ft.border.all(1, CARD_BORDER),
+                                     border_radius=8,
+                                     padding=ft.padding.symmetric(2, 6))],
+                       (المسافة = 10)،
+                stored_dtc_col,
+            ], spacing=10),
+            bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+            border_radius=14, padding=16,
+        )
+        ft.Container(content=log_panel,
+                     bgcolor=CARD_BG, border=ft.border.all(1, CARD_BORDER),
+                     border_radius=14, padding=16),
+    ], spacing=16, scroll=ft.ScrollMode.AUTO)
+
+    settings_ctrl = SettingsPage(
+        settings=current_settings,
+        on_save=on_settings_save,
+        on_test=on_settings_test,
+    )
+
+    # â â  Navigation â  ...
+    body = ft.Container(content=dashboard_page, padding=16, expand=True)
+
+    def on_nav(e: ft.ControlEvent):
+        idx = e.control.selected_index
+        body.content = dashboard_page if idx == 0 else settings_ctrl
+        page.update()
+
+    nav_bar = ft.NavigationBar(
+        الوجهات = [
+            ft.NavigationBarDestination(icon=ft.Icons.DASHBOARD_OUTLINED,
+                                        selected_icon=ft.Icons.DASHBOARD,
+                                        label="ظ"ظˆطط© ط§ظ"طھطظƒظ…"),
+            ft.NavigationBarDestination(icon=ft.Icons.SETTINGS_OUTLINED,
+                                        selected_icon=ft.Icons.SETTINGS,
+                                        label="ط§ظ"ط¥ط¹ط¯ط§ط¯ط§طھ"),
+        ],
+        bgcolor=CARD_BG,
+        selected_index=0,
+        on_change=on_nav,
+        indicator_color=f"{PRIMARY}33",
+        surface_tint_color=BG,
+    )
+
+    page.add(_make_header(), body, nav_bar)
+
+
+إذا كان __name__ == "__main__":
+    ft.app(target=main)
