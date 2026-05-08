@@ -39,3 +39,4 @@ jobs:
       - name: Build APK
         run: |
           flet build apk --project "SINDBAD_AI" --org "com.sindbad.pro"
+run: pip install flet==0.21.2 obd
