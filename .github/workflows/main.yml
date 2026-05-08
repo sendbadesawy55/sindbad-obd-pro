@@ -5,22 +5,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
-      - name: Install Flet
-        run: pip install flet==0.21.2
+
+      - name: Install dependencies
+        run: |
+          pip install flet==0.21.2
+
       - name: Build APK
-        run: flet build apk --project "SINDBAD_OBD" --org "com.sindbad.pro"
-      - name: Upload APK
+        run: |
+          flet build apk --project "SINDBAD_OBD" --org "com.sindbad.pro"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SINDBAD-PRO-INSTALL
+          name: sindbad-final-app
           path: build/apk/*.apk
