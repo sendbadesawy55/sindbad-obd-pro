@@ -1,77 +1,76 @@
 import flet as ft
-import time
+import obd
 import threading
-import random
+import time
 
 def main(page: ft.Page):
-    page.title = "SINDBAD OBD PRO + AI"
+    page.title = "SINDBAD OBD PRO"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#0a0f1a"
-    page.padding = 10
-    page.spacing = 10
+    page.rtl = True
 
-    # متغيرات العدادات
-    rpm_text = ft.Text("0", size=25, weight="bold", color="#3b82f6")
-    temp_text = ft.Text("0", size=25, weight="bold", color="#3b82f6")
-    speed_text = ft.Text("0", size=25, weight="bold", color="#3b82f6")
+    # تعريف العدادات
+    rpm_text = ft.Text("0", size=30, weight="bold", color="#3b82f6")
+    temp_text = ft.Text("0", size=30, weight="bold", color="#3b82f6")
+    speed_text = ft.Text("0", size=30, weight="bold", color="#3b82f6")
+    status_text = ft.Text("الحالة: جاري البحث عن وصلة OBD...", color="orange", size=12)
 
-    # تصميم كرت العداد
-    def create_gauge(title, value_obj, icon):
+    def create_gauge(title, val_obj, icon):
         return ft.Container(
             content=ft.Column([
-                ft.Icon(icon, color="#3b82f6", size=20),
-                ft.Text(title, size=10, color="white"),
-                value_obj,
+                ft.Icon(icon, color="#3b82f6"),
+                ft.Text(title, size=12, color="white"),
+                val_obj
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            bgcolor="#111827", padding=10, border_radius=10, expand=True
+            bgcolor="#111827", padding=15, border_radius=12, expand=True
         )
 
-    # صف العدادات
-    gauges_row = ft.Row([
-        create_gauge("RPM", rpm_text, ft.icons.SPEED),
-        create_gauge("TEMP", temp_text, ft.icons.THERMOSTAT),
-        create_gauge("SPEED", speed_text, ft.icons.ELECTRIC_CAR),
-    ], spacing=10)
-
-    # قسم ذكاء جوجل (Gemini) - سيفتح واجهة الدردشة
-    ai_section = ft.Container(
+    # زر المساعد الذكي
+    ai_btn = ft.Container(
         content=ft.Column([
-            ft.Row([
-                ft.Icon(ft.icons.AUTO_AWESOME, color="orange"),
-                ft.Text("مساعد سندباد الذكي (Gemini)", color="white", weight="bold"),
-            ]),
-            ft.ElevatedButton(
-                "فتح دردشة الذكاء الاصطناعي",
-                icon=ft.icons.CHAT,
-                on_click=lambda _: page.launch_url("https://gemini.google.com"),
-                style=ft.ButtonStyle(bgcolor="#3b82f6", color="white")
-            ),
+            ft.Row([ft.Icon(ft.icons.AUTO_AWESOME, color="orange"), ft.Text("اسأل مساعد سندباد (Gemini)", color="white")]),
+            ft.ElevatedButton("تحدث مع الذكاء الاصطناعي", on_click=lambda _: page.launch_url("https://gemini.google.com"))
         ]),
         bgcolor="#1e293b", padding=15, border_radius=15
     )
 
     page.add(
-        ft.Text("SINDBAD OBD PRO", size=22, weight="bold", color="white"),
-        gauges_row,
-        ft.Divider(height=20, color="#1e2d45"),
-        ai_section,
-        ft.Text("جاري سحب البيانات من الحساسات...", size=10, color="#64748b")
+        ft.Text("SINDBAD OBD PRO", size=24, weight="bold"),
+        status_text,
+        ft.Row([
+            create_gauge("دوران المحرك", rpm_text, ft.icons.SPEED),
+            create_gauge("الحرارة", temp_text, ft.icons.THERMOSTAT),
+            create_gauge("السرعة", speed_text, ft.icons.ELECTRIC_CAR)
+        ]),
+        ft.Divider(height=30),
+        ai_btn
     )
 
-    # دالة التحديث التلقائي (الحياة في البرنامج)
-    def update_data():
-        time.sleep(1)
+    def obd_thread():
+        # محاولة الاتصال بالبلوتوث/WiFi الخاص بالسيارة
+        connection = obd.OBD() 
         while True:
-            try:
-                rpm_text.value = str(random.randint(700, 4000))
-                temp_text.value = str(random.randint(85, 105))
-                speed_text.value = str(random.randint(0, 160))
-                page.update()
-                time.sleep(0.5) # تحديث سريع كل نصف ثانية
-            except:
-                break
+            if connection.is_connected():
+                status_text.value = "الحالة: متصل بالسيارة ✅"
+                status_text.color = "#22c55e"
+                
+                # قراءة البيانات الحقيقية
+                r_rpm = connection.query(obd.commands.RPM)
+                r_temp = connection.query(obd.commands.COOLANT_TEMP)
+                r_speed = connection.query(obd.commands.SPEED)
 
-    threading.Thread(target=update_data, daemon=True).start()
+                if not r_rpm.is_null(): rpm_text.value = str(r_rpm.value.magnitude)
+                if not r_temp.is_null(): temp_text.value = str(r_temp.value.magnitude)
+                if not r_speed.is_null(): speed_text.value = str(r_speed.value.magnitude)
+            else:
+                status_text.value = "الحالة: فصل الاتصال! جاري المحاولة..."
+                status_text.color = "red"
+                connection = obd.OBD() # إعادة محاولة الاتصال
+            
+            page.update()
+            time.sleep(0.5)
+
+    threading.Thread(target=obd_thread, daemon=True).start()
 
 if __name__ == "__main__":
     ft.app(target=main)
