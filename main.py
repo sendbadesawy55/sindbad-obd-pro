@@ -1,98 +1,64 @@
 import flet as ft
-import random
 import time
 import threading
+import random
 
-# --- الألوان ---
-PRIMARY = "#3b82f6"
-BG = "#0a0f1a"
-CARD_BG = "#111827"
-TEXT = "#f1f5f9"
-
-# كلاس عرض الحساسات - تم تحديثه ليعمل بسلاسة على أندرويد
+# كلاس الحساسات بتصميم بسيط يمنع تجمد الشاشة
 class SensorCard(ft.Container):
-    def __init__(self, title, unit, min_val, max_val, icon_name, precision=0):
+    def __init__(self, title, unit, icon_name):
         super().__init__()
         self.title = title
         self.unit = unit
-        self.min_val = min_val
-        self.max_val = max_val
-        self.icon_name = icon_name # هنا يتم استقبال ft.icons.NAME
-        self.precision = precision
+        self.icon_name = icon_name
         
-        self.bgcolor = CARD_BG
+        self.bgcolor = "#111827"
         self.padding = 15
         self.border_radius = 12
-        self.border = ft.border.all(1, "#1e2d45")
+        self.expand = True
         
-        self.val_text = ft.Text("0", size=24, weight="bold", color=PRIMARY)
-        self.progress = ft.ProgressBar(value=0, bgcolor="#1e293b", color=PRIMARY, height=6)
+        self.val_text = ft.Text("0", size=20, weight="bold", color="#3b82f6")
         
         self.content = ft.Column([
-            ft.Row([
-                ft.Icon(self.icon_name, color=PRIMARY, size=20),
-                ft.Text(self.title, size=14, color=TEXT, weight="w600"),
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Icon(self.icon_name, color="#3b82f6", size=25),
+            ft.Text(self.title, size=12, color="white"),
             self.val_text,
-            ft.Text(self.unit, size=10, color="#64748b"),
-            self.progress
-        ], spacing=8)
+            ft.Text(self.unit, size=9, color="#64748b"),
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
-    def set_value(self, v):
-        self.val_text.value = f"{v:.{self.precision}f}"
-        pct = max(0.0, min(1.0, (v - self.min_val) / (self.max_val - self.min_val)))
-        self.progress.value = pct
+    def update_val(self, v):
+        self.val_text.value = str(v)
         self.update()
 
 def main(page: ft.Page):
-    page.title = "SINDBAD OBD PRO"
+    page.title = "SINDBAD OBD"
     page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor = BG
-    page.rtl = True
-    page.padding = 20
-    page.scroll = ft.ScrollMode.AUTO
-
-    # العنوان العلوي
-    header = ft.Container(
-        content=ft.Row([
-            ft.Column([
-                ft.Text("SINDBAD OBD PRO", size=22, weight="bold", color="white"),
-                ft.Text("نظام فحص الأعطال الذكي", size=12, color="#64748b"),
-            ]),
-            ft.Icon(ft.icons.DIRECTIONS_CAR_FILLED, color=PRIMARY, size=30)
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        margin=ft.margin.only(bottom=20)
-    )
-
-    # تعريف الكروت مع استخدام حروف صغيرة ft.icons
-    rpm_card = SensorCard("دوران المحرك", "RPM", 0, 8000, ft.icons.SPEED)
-    temp_card = SensorCard("حرارة المحرك", "°C", 0, 120, ft.icons.THERMOSTAT)
-    speed_card = SensorCard("سرعة السيارة", "km/h", 0, 220, ft.icons.SHUTTLE_BUS)
-    volt_card = SensorCard("جهد البطارية", "Volt", 10, 16, ft.icons.BATTERY_CHARGING_FULL, precision=1)
-
+    page.bgcolor = "#0a0f1a"
+    page.window_resizable = False
+    
+    # تأكد من استخدام ft.icons بحروف صغيرة
+    rpm = SensorCard("دوران المحرك", "RPM", ft.icons.SPEED)
+    temp = SensorCard("الحرارة", "°C", ft.icons.THERMOSTAT)
+    
     page.add(
-        header,
-        ft.ResponsiveRow([
-            ft.Column([rpm_card], col={"xs": 12, "md": 6}),
-            ft.Column([speed_card], col={"xs": 12, "md": 6}),
-            ft.Column([temp_card], col={"xs": 12, "md": 6}),
-            ft.Column([volt_card], col={"xs": 12, "md": 6}),
-        ], spacing=15),
+        ft.Text("SINDBAD OBD PRO", size=20, weight="bold", color="white"),
+        ft.Row([rpm, temp], spacing=10)
     )
 
-    # دالة المحاكاة لتحديث البيانات
-    def update_data():
+    def run_sim():
+        # انتظر ثانية واحدة للتأكد من تحميل الواجهة تماماً
+        time.sleep(1)
         while True:
             try:
-                rpm_card.set_value(random.uniform(700, 3000))
-                temp_card.set_value(random.uniform(80, 100))
-                speed_card.set_value(random.uniform(0, 120))
-                volt_card.set_value(random.uniform(13.0, 14.5))
+                # تحديث القيم بشكل عشوائي للتبسيط
+                rpm.update_val(random.randint(700, 3000))
+                temp.update_val(random.randint(80, 95))
                 time.sleep(1)
             except:
                 break
 
-    threading.Thread(target=update_data, daemon=True).start()
+    # تشغيل التحديث في الخلفية
+    t = threading.Thread(target=run_sim, daemon=True)
+    t.start()
 
 if __name__ == "__main__":
     ft.app(target=main)
