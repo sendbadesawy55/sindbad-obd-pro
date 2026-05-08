@@ -1,38 +1,56 @@
-name: Build APK
-on: [push]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+import flet as ft
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+# تعريف الكلاس الخاص بعرض الحساسات (المكان اللي كان فيه المشكلة)
+class SensorCard(ft.Column): 
+    def __init__(self, name, value, icon_name, color):
+        super().__init__()
+        self.name = name
+        self.value = value
+        self.icon_name = icon_name
+        self.color = color
+        
+        # تصميم الكارت اللي بيعرض البيانات
+        self.controls = [
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(self.icon_name, color=self.color, size=30),
+                    ft.Column([
+                        ft.Text(self.name, size=16, weight="bold"),
+                        ft.Text(self.value, size=20, color=self.color),
+                    ], spacing=2)
+                ]),
+                padding=15,
+                bgcolor=ft.colors.with_opacity(0.1, self.color),
+                border_radius=10,
+                border=ft.border.all(1, self.color),
+            )
+        ]
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+def main(page: ft.Page):
+    page.title = "SINDBAD OBD PRO"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.scroll = ft.ScrollMode.AUTO
+    
+    # عنوان التطبيق
+    page.add(
+        ft.Text("Sindbad OBD Diagnostics", size=30, weight="bold", color=ft.colors.BLUE_400),
+        ft.Divider(),
+    )
 
-      - name: Setup Flutter (Stable Version)
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.19.0' # نسخة مستقرة بتبعدنا عن أخطاء التحديثات الجديدة
-          channel: 'stable'
+    # أمثلة للحساسات (لاحظ استخدام ft.icons بحروف صغيرة)
+    sensors = [
+        SensorCard("Engine RPM", "0 RPM", ft.icons.SPEED, ft.colors.GREEN),
+        SensorCard("Coolant Temp", "0 °C", ft.icons.THERMOSTAT, ft.colors.BLUE),
+        SensorCard("Throttle Position", "0 %", ft.icons.SETTINGS_INPUT_COMPONENT, ft.colors.ORANGE),
+        SensorCard("Battery Voltage", "0 V", ft.icons.BATTERY_CHARGING_FULL, ft.colors.RED),
+    ]
 
-      - name: Install dependencies
-        run: |
-          pip install flet==0.21.2
+    # إضافة الحساسات للصفحة
+    grid = ft.Column(controls=sensors, spacing=10)
+    page.add(grid)
 
-      - name: Build APK
-        run: |
-          flet build apk
+    page.update()
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sindbad-app-stable
-          path: build/apk/*.apk
+# تشغيل التطبيق
+if __name__ == "__main__":
+    ft.app(target=main)
