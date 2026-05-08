@@ -36,3 +36,6 @@ jobs:
         with:
           name: sindbad-final-app
           path: build/apk/*.apk
+      - name: Build APK
+        run: |
+          flet build apk --project "SINDBAD_AI" --org "com.sindbad.pro"
