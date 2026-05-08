@@ -1,4 +1,7 @@
-name: Build APK
+name: Build APK       - name: Build APK
+        run: |
+          flet build apk --project "SINDBAD_PRO" --org "com.sindbad.app" --include-packages flet,obd,pyserial
+
 on: [push]
 
 jobs:
