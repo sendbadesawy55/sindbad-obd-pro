@@ -5,18 +5,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.9'
+
       - name: Install dependencies
         run: |
-          pip install flet
+          pip install flet==0.21.2
+
       - name: Build APK
         run: |
           flet build apk
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sindbad-app
+          name: sindbad-app-fixed
           path: build/apk/*.apk
